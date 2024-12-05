@@ -3,12 +3,10 @@ from pyomo.opt import SolverFactory
 
 # Input data
 classes = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11', 'C12']  # Classes
-students = {'C1': 30, 'C2': 25, 'C3': 20, 'C4': 35, 'C5': 15, 'C6': 30, 'C7': 30, 'C8': 25, 'C9': 20, 'C10': 35, 'C11': 15, 'C12': 45}  # class strength
-durations = {'C1': 3, 'C2': 2, 'C3': 1, 'C4': 2, 'C5': 1, 'C6': 3, 'C7': 2, 'C8': 1, 'C9': 3, 'C10': 3, 'C11': 3, 'C12': 3}  # class duration in hours
+students = {'C1': 30, 'C2': 25, 'C3': 20, 'C4': 35, 'C5': 15, 'C6': 45, 'C7': 30, 'C8': 25, 'C9': 20, 'C10': 35, 'C11': 15, 'C12': 45}  # class strength
+durations = {'C1': 1, 'C2': 1, 'C3': 1, 'C4': 2, 'C5': 1, 'C6': 3, 'C7': 2, 'C8': 1, 'C9': 1, 'C10': 2, 'C11': 1, 'C12': 3}  # class duration in hours
 classrooms = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7']  # rooms
-classrooms = ['R1', 'R2']  # rooms
-capacity = {'R1': 45, 'R2': 50, 'R3': 35, 'R4': 60, 'R5': 30, 'R6': 45, 'R7': 60}  # Room capacities
-
+capacity = {'R1': 40, 'R2': 50, 'R3': 35, 'R4': 60, 'R5': 30, 'R6': 45, 'R7': 60}  # Room capacities
 days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] # days in the week where classes can be placed
 
 # Class schedule
@@ -27,14 +25,13 @@ class_days = {
     'C12': ['Wednesday', 'Friday']
 }
 
-
 # Time slots (8 AM to 8 PM is 12 hours, so we use time slots 8-20)
 time_slots = range(8, 20)
 
 # Create a model
 model = ConcreteModel()
 
-# New: Variables: x[c, r, t, d] = 1 if class c is scheduled in room r starting at time t on day d
+# Variables: x[c, r, t, d] = 1 if class c is scheduled in room r starting at time t on day d
 model.x = Var(classes, classrooms, time_slots, days, domain=Binary)
 
 # Constraint 1: Each class must be assigned to its specified days, one room and one start time per day
@@ -62,49 +59,33 @@ def valid_start_time_rule(model, c, r, t, d):
     return model.x[c, r, t, d] == 0 if t + durations[c] > 20 else Constraint.Skip
 model.valid_start_time = Constraint(classes, classrooms, time_slots, days, rule=valid_start_time_rule)
 
-
-# Objective is to Maximize room utilization efficiency
-def room_efficiency_objective(model):
-    return sum((model.x[c, r, t, d] * (capacity[r] - students[c]))**2
+# Objective: Maximize the number of classes scheduled
+def maximize_classes_scheduled(model):
+    return sum(model.x[c, r, t, d]
                for c in classes for r in classrooms for t in time_slots for d in days)
-
-# minimize sense will be used
-model.obj = Objective(rule=room_efficiency_objective, sense=minimize)
-
+model.obj = Objective(rule=maximize_classes_scheduled, sense=maximize)
 
 # Solve using Gurobi
 opt = SolverFactory('gurobi')
 results = opt.solve(model, tee=True)
 
-# # Output the weekly schedule
-# for c in classes:
-#     for d in days:
-#         for r in classrooms:
-#             for t in time_slots:
-#                 if model.x[c, r, t, d].value == 1:
-#                     print(f"Class {c} is scheduled in Room {r} on {d} starting at {t}:00 for {durations[c]} hours")
+# Output the weekly schedule
+print("Class Schedule:")
+for c in classes:
+    for d in days:
+        for r in classrooms:
+            for t in time_slots:
+                if model.x[c, r, t, d].value == 1:
+                    print(f"Class {c} is scheduled in Room {r} on {d} starting at {t}:00 for {durations[c]} hours")
 
-
-# Check solver status for infeasibility
-if (results.solver.termination_condition == TerminationCondition.optimal or
-    results.solver.termination_condition == TerminationCondition.feasible):
-    # If a feasible solution is found, print the schedule
-    for c in classes:
+# Count and print the number of time slots used
+used_time_slots = set()  # A set to track used time slots
+for r in classrooms:
+    for t in time_slots:
         for d in days:
-            for r in classrooms:
-                for t in time_slots:
-                    if model.x[c, r, t, d].value == 1:
-                        print(f"Class {c} is scheduled in Room {r} on {d} starting at {t}:00 for {durations[c]} hours")
-else:
-    # Handle infeasibility
-    if results.solver.termination_condition == TerminationCondition.infeasible:
-        print("No feasible solution found: The current problem constraints are too restrictive.")
-        # Optionally, include potential reasons
-        total_class_duration = sum(durations[c] * len(class_days[c]) for c in classes)
-        total_available_time_slots = len(classrooms) * len(time_slots) * len(days)
-        if total_class_duration > total_available_time_slots:
-            print(f"Reason: The total required class time ({total_class_duration} hours) exceeds available time slots ({total_available_time_slots} hours).")
-        else:
-            print("Reason: Check if room capacities or time constraints are too tight.")
-    else:
-        print(f"Solver did not return a feasible solution. Termination condition: {results.solver.termination_condition}")
+            for c in classes:
+                if model.x[c, r, t, d].value == 1:
+                    used_time_slots.add(t)  # Add time slot t to the set if it's used
+
+# Print the number of distinct time slots used
+print(f"\nTotal distinct time slots used: {len(used_time_slots)}")
